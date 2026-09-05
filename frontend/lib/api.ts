@@ -41,9 +41,12 @@ export const api = {
     return fetchJson(`${API_BASE}/api/conversation?limit=${limit}&offset=${offset}`);
   },
 
-  async transcribeAudio(audioBlob: Blob): Promise<string> {
+  async transcribeAudio(audioBlob: Blob, language?: string): Promise<string> {
     const formData = new FormData();
     formData.append('file', audioBlob, 'audio.webm');
+    if (language) {
+      formData.append('language', language);
+    }
 
     const response = await fetch(`${API_BASE}/api/transcribe`, {
       method: 'POST',
@@ -55,7 +58,18 @@ export const api = {
       throw new Error(error.detail || 'Transcription failed');
     }
 
-    return response.text();
+    const data = await response.json().catch(async () => {
+      const text = await response.text().catch(() => '');
+      return text;
+    });
+
+    if (data && typeof data === 'object' && 'text' in data) {
+      return (data as { text: string }).text || '';
+    }
+    if (typeof data === 'string') {
+      return data.replace(/^"|"$/g, '').trim();
+    }
+    return '';
   },
 
   async generateSpeech(text: string): Promise<Blob> {

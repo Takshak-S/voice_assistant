@@ -3,6 +3,7 @@ import { api, getWebSocketUrl } from '@/lib/api';
 import { useWebSocket } from './useWebSocket';
 import { useSpeechRecognition } from './useSpeechRecognition';
 import { useSpeechSynthesis } from './useSpeechSynthesis';
+import { useAudioRecorder } from './useAudioRecorder';
 import type { AssistantState } from '@/types/websocket';
 import type { Conversation, Message } from '@/types/conversation';
 
@@ -37,6 +38,11 @@ export function useVoiceAssistant({
   const isSpeakingRef = useRef(false);
   const lastTranscriptRef = useRef('');
   const hasSentVoiceRef = useRef(false);
+  const conversationIdRef = useRef<number | null>(conversationId);
+  conversationIdRef.current = conversationId;
+  const languageRef = useRef<string>(language);
+  languageRef.current = language;
+  const isTranscribingRef = useRef(false);
 
   const speech = useSpeechSynthesis({ lang: language });
 
@@ -197,11 +203,55 @@ export function useVoiceAssistant({
     },
   });
 
+  const sendUserMessageRef = useRef<(content: string) => void>(() => {});
+
+  const audioRecorder = useAudioRecorder({
+    onStop: async (blob: Blob) => {
+      // If Web Speech API already delivered final text and sent message, skip
+      if (hasSentVoiceRef.current) return;
+
+      const currentConvId = conversationIdRef.current;
+      if (blob.size > 0 && currentConvId) {
+        try {
+          isTranscribingRef.current = true;
+          setState('transcribing');
+          setInterimTranscript('Transcribing with Whisper...');
+
+          const text = await api.transcribeAudio(blob, languageRef.current);
+          if (text.trim() && !hasSentVoiceRef.current) {
+            hasSentVoiceRef.current = true;
+            setTranscript(text.trim());
+            setInterimTranscript('');
+            sendUserMessageRef.current(text.trim());
+            return;
+          }
+        } catch (err: unknown) {
+          const errMsg = err instanceof Error ? err.message : 'Transcription failed';
+          console.warn('Whisper fallback error:', errMsg);
+          setError(errMsg);
+          setState('error');
+          setTimeout(() => setState('idle'), 3000);
+          return;
+        } finally {
+          isTranscribingRef.current = false;
+        }
+      }
+
+      if (!hasSentVoiceRef.current) {
+        setState('idle');
+      }
+    },
+    onError: (err) => {
+      console.warn('Audio recorder warning:', err);
+    },
+  });
+
   const sendUserMessage = useCallback(
     (content: string) => {
       if (!conversationId || !content.trim()) return;
 
       stopListening();
+      audioRecorder.stopRecording();
       speech.stop();
       isSpeakingRef.current = false;
 
@@ -217,8 +267,10 @@ export function useVoiceAssistant({
       responseAccumulator.current = '';
       wsSendUserMessage(content.trim());
     },
-    [conversationId, createNewRequest, speech, wsSendUserMessage]
+    [conversationId, createNewRequest, speech, wsSendUserMessage, audioRecorder]
   );
+
+  sendUserMessageRef.current = sendUserMessage;
 
   const { isListening, error: sttError, startListening, stopListening, abortListening, isSupported: sttSupported } = useSpeechRecognition({
     lang: language,
@@ -238,6 +290,13 @@ export function useVoiceAssistant({
       }
     },
     onError: (err) => {
+      // If Chrome SpeechRecognition failed due to network / Google cloud unreachable,
+      // ignore and let audioRecorder transcribe via Groq Whisper when recording stops!
+      if (err.message.toLowerCase().includes('network')) {
+        console.warn('Browser SpeechRecognition network error. Falling back to Groq Whisper.');
+        setInterimTranscript('Switching to Whisper transcription...');
+        return;
+      }
       setError(err.message);
       setState('error');
       setTimeout(() => setState('idle'), 2000);
@@ -249,7 +308,7 @@ export function useVoiceAssistant({
       if (lastTranscriptRef.current.trim() && !hasSentVoiceRef.current && conversationId) {
         hasSentVoiceRef.current = true;
         sendUserMessage(lastTranscriptRef.current.trim());
-      } else if (!hasSentVoiceRef.current) {
+      } else if (!hasSentVoiceRef.current && !isTranscribingRef.current) {
         setState((curr) => (curr === 'listening' ? 'idle' : curr));
       }
     },
@@ -264,19 +323,34 @@ export function useVoiceAssistant({
     setInterimTranscript('');
     setError(null);
     sendStartListening();
-    startListening();
+
+    // Start microphone recording for Groq Whisper fallback & live visualizer audioLevel
+    audioRecorder.startRecording();
+
+    // Also attempt Web Speech API if supported
+    if (sttSupported) {
+      try {
+        startListening();
+      } catch (e) {
+        console.warn('SpeechRecognition failed to start:', e);
+      }
+    }
     setState('listening');
-  }, [speech, sendStartListening, startListening]);
+  }, [speech, sendStartListening, audioRecorder, sttSupported, startListening]);
 
   const handleVoiceStop = useCallback(() => {
     stopListening();
+    audioRecorder.stopRecording();
+
+    // If Web Speech already got a transcript, send immediately
     if (lastTranscriptRef.current.trim() && !hasSentVoiceRef.current && conversationId) {
       hasSentVoiceRef.current = true;
       sendUserMessage(lastTranscriptRef.current.trim());
     } else if (!hasSentVoiceRef.current) {
-      setState('idle');
+      // Otherwise audioRecorder.onStop will transcribe with Whisper
+      setState('transcribing');
     }
-  }, [stopListening, conversationId, sendUserMessage]);
+  }, [stopListening, audioRecorder, conversationId, sendUserMessage]);
 
   const handleSendText = useCallback(
     (text: string) => {
@@ -309,8 +383,10 @@ export function useVoiceAssistant({
 
   const handleStopSpeaking = useCallback(() => {
     handleInterruption();
+    audioRecorder.cancelRecording();
+    stopListening();
     setState('idle');
-  }, [handleInterruption]);
+  }, [handleInterruption, audioRecorder, stopListening]);
 
   const handleClearError = useCallback(() => {
     setError(null);
@@ -335,10 +411,10 @@ export function useVoiceAssistant({
     }
   }, [conversationId, handleNewConversation]);
 
-  // Update STT support state
+  // STT is supported either via Web Speech API or Groq Whisper backend
   useEffect(() => {
-    setIsSttSupported(sttSupported);
-  }, [sttSupported]);
+    setIsSttSupported(true);
+  }, []);
 
   return {
     conversationId,
@@ -347,8 +423,8 @@ export function useVoiceAssistant({
     state,
     transcript: transcript || interimTranscript,
     isFinalTranscript: !!transcript,
-    isRecording: isListening || state === 'listening',
-    audioLevel: 0,
+    isRecording: audioRecorder.isRecording || isListening || state === 'listening',
+    audioLevel: audioRecorder.audioLevel,
     isConnected,
     connectionError,
     isLoading,
@@ -357,7 +433,7 @@ export function useVoiceAssistant({
     isMuted: speech.isMuted,
     volume: speech.volume,
     toolStatus,
-    isSttSupported,
+    isSttSupported: true,
     language,
     setLanguage,
     metrics: {
