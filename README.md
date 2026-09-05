@@ -35,24 +35,24 @@ The project is designed to work **without any paid API keys** for the default co
 
 ```mermaid
 graph TB
-    subgraph Frontend[Frontend - Next.js + React]
-        UI[Voice UI Components]
-        WS[WebSocket Client]
-        SR[Speech Recognition (Web Speech API)]
-        SS[Speech Synthesis (Web Speech API)]
+    subgraph Frontend["Frontend - Next.js + React"]
+        UI["Voice UI Components"]
+        WS["WebSocket Client"]
+        SR["Speech Recognition (Web Speech API)"]
+        SS["Speech Synthesis (Web Speech API)"]
     end
 
-    subgraph Backend[Backend - FastAPI]
-        WS_SERVER[WebSocket Server]
-        CONV[Conversation Service]
-        LLM[LLM Service]
-        TOOLS[Tool Service]
-        DB[(PostgreSQL Database)]
+    subgraph Backend["Backend - FastAPI"]
+        WS_SERVER["WebSocket Server"]
+        CONV["Conversation Service"]
+        LLM["LLM Service"]
+        TOOLS["Tool Service"]
+        DB[("PostgreSQL Database")]
     end
 
-    subgraph Providers[External Providers]
-        GROQ[Groq API (Free Tier)]
-        WEATHER[Open-Meteo + OpenStreetMap (Free)]
+    subgraph Providers["External Providers"]
+        GROQ["Groq API (Free Tier)"]
+        WEATHER["Open-Meteo + OpenStreetMap (Free)"]
     end
 
     UI --> WS
