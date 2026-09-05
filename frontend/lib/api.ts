@@ -72,6 +72,18 @@ export const api = {
 
     return response.blob();
   },
+
+  async summarizeConversation(conversationId: number): Promise<{ title: string; summary: string; message_count: number }> {
+    return fetchJson(`${API_BASE}/api/conversation/${conversationId}/summarize`, {
+      method: 'POST',
+    });
+  },
+
+  async generateTitle(conversationId: number): Promise<{ id: number; title: string }> {
+    return fetchJson(`${API_BASE}/api/conversation/${conversationId}/title`, {
+      method: 'POST',
+    });
+  },
 };
 
 export function getWebSocketUrl(conversationId: number): string {

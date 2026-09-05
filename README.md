@@ -420,17 +420,23 @@ realtime_voice_assistant/
 6. **Audio Format**: Browser STT uses browser's preferred format (typically WebM/Opus).
 6. **Single User**: No authentication/multi-user support in MVP.
 
-## Future Improvements
+## Feature Checklist & Roadmap
 
+- [x] Real-time streaming voice conversation with Groq LLM
+- [x] Multi-language support (English, Spanish, French, German, Hindi, Japanese, Chinese)
+- [x] Conversation summarization & auto-titling
+- [x] Export (Markdown, JSON) & import conversations
+- [x] Extended tool ecosystem:
+  - Calculator tool
+  - Time tool
+  - Weather tool (Open-Meteo)
+  - Notes & Reminders tool (SQLite)
+  - Wikipedia search tool
+- [x] Session analytics and latency/token metrics
 - [ ] Wake word detection (Porcupine/Picovoice)
 - [ ] Persistent user memory with vector database
 - [ ] User authentication and multi-tenancy
-- [ ] Multi-language support
 - [ ] Calendar integration (Google/Outlook)
 - [ ] Email integration
 - [ ] Advanced RAG with document upload
 - [ ] Mobile application (React Native)
-- [ ] Conversation summarization
-- [ ] Export/import conversations
-- [ ] Custom tool/plugin system
-- [ ] Analytics and usage metrics

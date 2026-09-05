@@ -53,6 +53,11 @@ export function useSpeechRecognition({
 }: UseSpeechRecognitionOptions = {}) {
   const optionsRef = useRef({ onResult, onError, onStart, onEnd });
   optionsRef.current = { onResult, onError, onStart, onEnd };
+  const langRef = useRef(lang);
+
+  useEffect(() => {
+    langRef.current = lang;
+  }, [lang]);
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const [isListening, setIsListening] = useState(false);
@@ -92,7 +97,7 @@ export function useSpeechRecognition({
 
       recognition.continuous = continuous;
       recognition.interimResults = interimResults;
-      recognition.lang = lang;
+      recognition.lang = langRef.current || lang;
       recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {

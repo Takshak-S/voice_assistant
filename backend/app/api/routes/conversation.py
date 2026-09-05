@@ -53,3 +53,23 @@ def list_conversations(
         )
         for c in conversations
     ]
+
+
+@router.post("/{conversation_id}/summarize")
+async def summarize_conversation(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+):
+    service = get_conversation_service(db)
+    return await service.summarize_conversation(conversation_id)
+
+
+@router.post("/{conversation_id}/title")
+async def generate_conversation_title(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+):
+    service = get_conversation_service(db)
+    new_title = await service.generate_title(conversation_id)
+    return {"id": conversation_id, "title": new_title}
+

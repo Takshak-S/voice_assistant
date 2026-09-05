@@ -432,6 +432,11 @@ async def handle_user_message(
                 MessageCreate(role=MessageRole.assistant, content=full_response.strip()),
             )
 
+            # Auto-generate title in background if conversation title is empty
+            conv = service.get_conversation(conversation_id)
+            if conv and not conv.title:
+                asyncio.create_task(service.generate_title(conversation_id))
+
             llm_duration = time.monotonic() - llm_start
             logger.info(
                 "llm_completed",

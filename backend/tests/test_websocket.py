@@ -118,13 +118,15 @@ class TestToolService:
 
     def test_get_all_schemas(self, tool_service):
         schemas = tool_service.get_all_schemas()
-        # Should have 3 default tools + 1 mock tool = 4
-        assert len(schemas) == 4
+        # Should have 5 default tools + 1 mock tool = 6
+        assert len(schemas) == 6
         names = {s.name for s in schemas}
         assert "mock_tool" in names
         assert "calculator" in names
         assert "get_time" in names
         assert "get_weather" in names
+        assert "manage_notes" in names
+        assert "search_wikipedia" in names
 
     def test_get_tool_names(self, tool_service):
         names = tool_service.get_tool_names()

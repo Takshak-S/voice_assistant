@@ -208,6 +208,74 @@ class ConversationService:
                 MessageCreate(role=MessageRole.assistant, content=full_response)
             )
 
+    async def generate_title(self, conversation_id: int) -> str:
+        """Generate a concise 3-5 word title for the conversation based on user messages."""
+        conversation = self.get_conversation(conversation_id)
+        if not conversation:
+            return "New Chat"
+
+        user_messages = [
+            m.content for m in self.get_messages(conversation_id)
+            if m.role == MessageRole.user
+        ]
+        if not user_messages:
+            return conversation.title or "New Chat"
+
+        prompt = [
+            {"role": "system", "content": "You generate short, clean 3-5 word titles for conversations. Output only the title without quotes or punctuation."},
+            {"role": "user", "content": f"Generate a title for a conversation starting with: {user_messages[0]}"}
+        ]
+        try:
+            res = await llm_service.generate(prompt, max_tokens=20, temperature=0.5)
+            title = res.get("content", "").strip().replace('"', '').replace("'", "")
+            if title:
+                conversation.title = title[:100]
+                self.db.commit()
+                return conversation.title
+        except Exception:
+            pass
+        return conversation.title or "New Chat"
+
+    async def summarize_conversation(self, conversation_id: int) -> dict:
+        """Generate an executive summary of the conversation with bulleted key points."""
+        conversation = self.get_conversation(conversation_id)
+        if not conversation:
+            return {"summary": "Conversation not found.", "message_count": 0}
+
+        msgs = self.get_messages(conversation_id)
+        dialogue = [
+            f"{m.role.value.capitalize()}: {m.content}"
+            for m in msgs
+            if m.role in (MessageRole.user, MessageRole.assistant) and m.content
+        ]
+        if not dialogue:
+            return {
+                "title": conversation.title or "New Chat",
+                "summary": "No messages in this conversation yet.",
+                "message_count": 0,
+            }
+
+        prompt = [
+            {"role": "system", "content": "You are an assistant summarizing a voice conversation. Provide a brief 2-sentence overview followed by bullet points with key takeaways or decisions."},
+            {"role": "user", "content": "Summarize this conversation:\n\n" + "\n".join(dialogue)}
+        ]
+
+        try:
+            res = await llm_service.generate(prompt, temperature=0.5, max_tokens=300)
+            summary_text = res.get("content", "").strip()
+            return {
+                "title": conversation.title or "Conversation Summary",
+                "summary": summary_text,
+                "message_count": len(dialogue),
+            }
+        except Exception as e:
+            return {
+                "title": conversation.title or "Conversation Summary",
+                "summary": f"Could not generate summary: {str(e)}",
+                "message_count": len(dialogue),
+            }
+
 
 def get_conversation_service(db: Session) -> ConversationService:
     return ConversationService(db)
+

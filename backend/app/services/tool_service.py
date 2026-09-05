@@ -4,8 +4,10 @@ import asyncio
 from app.schemas.tools import ToolResult, ToolSchema
 from app.tools.base import BaseTool
 from app.tools.calculator import CalculatorTool
+from app.tools.notes_tool import NotesTool
 from app.tools.time_tool import TimeTool
 from app.tools.weather import WeatherTool
+from app.tools.wikipedia_tool import WikipediaTool
 
 
 class ToolService:
@@ -18,6 +20,8 @@ class ToolService:
         self.register(CalculatorTool())
         self.register(TimeTool())
         self.register(WeatherTool())
+        self.register(NotesTool())
+        self.register(WikipediaTool())
 
     def register(self, tool: BaseTool):
         self._tools[tool.name] = tool

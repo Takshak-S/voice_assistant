@@ -8,9 +8,13 @@ import type { Conversation, Message } from '@/types/conversation';
 
 interface UseVoiceAssistantOptions {
   initialConversationId?: number;
+  initialLanguage?: string;
 }
 
-export function useVoiceAssistant({ initialConversationId }: UseVoiceAssistantOptions = {}) {
+export function useVoiceAssistant({
+  initialConversationId,
+  initialLanguage = 'en-US',
+}: UseVoiceAssistantOptions = {}) {
   const [conversationId, setConversationId] = useState<number | null>(initialConversationId || null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -21,6 +25,12 @@ export function useVoiceAssistant({ initialConversationId }: UseVoiceAssistantOp
   const [error, setError] = useState<string | null>(null);
   const [toolStatus, setToolStatus] = useState<{ name: string; args: Record<string, unknown> } | null>(null);
   const [isSttSupported, setIsSttSupported] = useState(false);
+  const [language, setLanguage] = useState<string>(initialLanguage);
+
+  // Metrics
+  const [toolsExecutedCount, setToolsExecutedCount] = useState(0);
+  const [lastLatencyMs, setLastLatencyMs] = useState<number | null>(null);
+  const sendTimeRef = useRef<number | null>(null);
 
   const activeRequestIdRef = useRef<string | null>(null);
   const responseAccumulator = useRef('');
@@ -28,7 +38,7 @@ export function useVoiceAssistant({ initialConversationId }: UseVoiceAssistantOp
   const lastTranscriptRef = useRef('');
   const hasSentVoiceRef = useRef(false);
 
-  const speech = useSpeechSynthesis();
+  const speech = useSpeechSynthesis({ lang: language });
 
   const createNewRequest = useCallback(() => {
     activeRequestIdRef.current = crypto.randomUUID();
@@ -88,6 +98,7 @@ export function useVoiceAssistant({ initialConversationId }: UseVoiceAssistantOp
     onToolExecutionStarted: (name, args) => {
       setState('executing_tool');
       setToolStatus({ name, args });
+      setToolsExecutedCount((prev) => prev + 1);
     },
     onToolExecutionCompleted: () => {
       setToolStatus(null);
@@ -95,6 +106,11 @@ export function useVoiceAssistant({ initialConversationId }: UseVoiceAssistantOp
     },
     onResponseChunk: (text, requestId) => {
       if (!text) return;
+      if (sendTimeRef.current) {
+        setLastLatencyMs(Date.now() - sendTimeRef.current);
+        sendTimeRef.current = null;
+      }
+
       if (!activeRequestIdRef.current || activeRequestIdRef.current === requestId) {
         activeRequestIdRef.current = requestId;
         responseAccumulator.current += text;
@@ -146,7 +162,8 @@ export function useVoiceAssistant({ initialConversationId }: UseVoiceAssistantOp
             () => {
               isSpeakingRef.current = false;
               setState('idle');
-            }
+            },
+            language
           );
         } else {
           setState('idle');
@@ -189,6 +206,7 @@ export function useVoiceAssistant({ initialConversationId }: UseVoiceAssistantOp
       isSpeakingRef.current = false;
 
       const requestId = createNewRequest();
+      sendTimeRef.current = Date.now();
 
       setMessages((prev) => [
         ...prev,
@@ -203,6 +221,7 @@ export function useVoiceAssistant({ initialConversationId }: UseVoiceAssistantOp
   );
 
   const { isListening, error: sttError, startListening, stopListening, abortListening, isSupported: sttSupported } = useSpeechRecognition({
+    lang: language,
     continuous: false,
     interimResults: true,
     onResult: (text, isFinal) => {
@@ -284,6 +303,10 @@ export function useVoiceAssistant({ initialConversationId }: UseVoiceAssistantOp
     }
   }, []);
 
+  const importMessages = useCallback((imported: Message[]) => {
+    setMessages(imported);
+  }, []);
+
   const handleStopSpeaking = useCallback(() => {
     handleInterruption();
     setState('idle');
@@ -335,12 +358,21 @@ export function useVoiceAssistant({ initialConversationId }: UseVoiceAssistantOp
     volume: speech.volume,
     toolStatus,
     isSttSupported,
+    language,
+    setLanguage,
+    metrics: {
+      messageCount: messages.length,
+      toolsExecutedCount,
+      lastLatencyMs,
+      modelName: 'qwen/qwen3.8-27b',
+    },
     handleVoiceStart,
     handleVoiceStop,
     handleSendText,
     handleNewConversation,
     handleStopSpeaking,
     handleClearError,
+    importMessages,
     toggleMute: speech.toggleMute,
     setVolume: speech.setVolume,
   };

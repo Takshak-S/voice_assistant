@@ -1,11 +1,16 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 
-export function useSpeechSynthesis() {
+interface UseSpeechSynthesisOptions {
+  lang?: string;
+}
+
+export function useSpeechSynthesis({ lang = 'en-US' }: UseSpeechSynthesisOptions = {}) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(1);
   const isMutedRef = useRef(isMuted);
   const volumeRef = useRef(volume);
+  const langRef = useRef(lang);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   useEffect(() => {
@@ -16,6 +21,10 @@ export function useSpeechSynthesis() {
     volumeRef.current = volume;
   }, [volume]);
 
+  useEffect(() => {
+    langRef.current = lang;
+  }, [lang]);
+
   const stop = useCallback(() => {
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
@@ -24,7 +33,7 @@ export function useSpeechSynthesis() {
     setIsPlaying(false);
   }, []);
 
-  const speak = useCallback((text: string, onStart?: () => void, onEnd?: () => void) => {
+  const speak = useCallback((text: string, onStart?: () => void, onEnd?: () => void, customLang?: string) => {
     if (typeof window === 'undefined' || !window.speechSynthesis) {
       onEnd?.();
       return;
@@ -41,16 +50,24 @@ export function useSpeechSynthesis() {
     const utterance = new SpeechSynthesisUtterance(text.trim());
     currentUtteranceRef.current = utterance;
 
+    const targetLang = customLang || langRef.current || 'en-US';
     utterance.volume = isMutedRef.current ? 0 : volumeRef.current;
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
-    utterance.lang = 'en-US';
+    utterance.lang = targetLang;
 
-    // Pick a natural English voice if available
+    // Pick a natural voice for the target language if available
+    const prefix = targetLang.split('-')[0].toLowerCase();
     const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find(
-      (v) => v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha'))
-    ) || voices.find((v) => v.lang.startsWith('en'));
+    const preferredVoice =
+      voices.find(
+        (v) =>
+          v.lang.toLowerCase().startsWith(prefix) &&
+          (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Premium'))
+      ) ||
+      voices.find((v) => v.lang.toLowerCase().startsWith(prefix)) ||
+      voices.find((v) => v.lang.toLowerCase().startsWith('en'));
+
     if (preferredVoice) {
       utterance.voice = preferredVoice;
     }
