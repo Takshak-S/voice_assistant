@@ -204,8 +204,14 @@ export function useVoiceAssistant({
   });
 
   const sendUserMessageRef = useRef<(content: string) => void>(() => {});
+  const handleVoiceStopRef = useRef<() => void>(() => {});
+  const autoStopTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const audioRecorder = useAudioRecorder({
+    onSilence: () => {
+      // Automatic stop when silence detected after user speaks
+      handleVoiceStopRef.current();
+    },
     onStop: async (blob: Blob) => {
       // If Web Speech API already delivered final text and sent message, skip
       if (hasSentVoiceRef.current) return;
@@ -250,6 +256,11 @@ export function useVoiceAssistant({
     (content: string) => {
       if (!conversationId || !content.trim()) return;
 
+      if (autoStopTimeoutRef.current) {
+        clearTimeout(autoStopTimeoutRef.current);
+        autoStopTimeoutRef.current = null;
+      }
+
       stopListening();
       audioRecorder.stopRecording();
       speech.stop();
@@ -291,10 +302,9 @@ export function useVoiceAssistant({
     },
     onError: (err) => {
       // If Chrome SpeechRecognition failed due to network / Google cloud unreachable,
-      // ignore and let audioRecorder transcribe via Groq Whisper when recording stops!
+      // silently let audioRecorder transcribe via Groq Whisper when recording stops!
       if (err.message.toLowerCase().includes('network')) {
-        console.warn('Browser SpeechRecognition network error. Falling back to Groq Whisper.');
-        setInterimTranscript('Switching to Whisper transcription...');
+        console.warn('Browser SpeechRecognition network error. Whisper fallback active.');
         return;
       }
       setError(err.message);
@@ -336,9 +346,20 @@ export function useVoiceAssistant({
       }
     }
     setState('listening');
+
+    // Safety timeout: automatically stop and transcribe after 15s max
+    if (autoStopTimeoutRef.current) clearTimeout(autoStopTimeoutRef.current);
+    autoStopTimeoutRef.current = setTimeout(() => {
+      handleVoiceStopRef.current();
+    }, 15000);
   }, [speech, sendStartListening, audioRecorder, sttSupported, startListening]);
 
   const handleVoiceStop = useCallback(() => {
+    if (autoStopTimeoutRef.current) {
+      clearTimeout(autoStopTimeoutRef.current);
+      autoStopTimeoutRef.current = null;
+    }
+
     stopListening();
     audioRecorder.stopRecording();
 
@@ -347,10 +368,13 @@ export function useVoiceAssistant({
       hasSentVoiceRef.current = true;
       sendUserMessage(lastTranscriptRef.current.trim());
     } else if (!hasSentVoiceRef.current) {
-      // Otherwise audioRecorder.onStop will transcribe with Whisper
+      // Transition to transcribing while audioRecorder.onStop sends to Whisper
       setState('transcribing');
+      setInterimTranscript('Transcribing with Whisper...');
     }
   }, [stopListening, audioRecorder, conversationId, sendUserMessage]);
+
+  handleVoiceStopRef.current = handleVoiceStop;
 
   const handleSendText = useCallback(
     (text: string) => {

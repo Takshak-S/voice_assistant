@@ -5,6 +5,7 @@ interface UseAudioRecorderOptions {
   onStop?: (blob: Blob) => void;
   onError?: (error: Error) => void;
   onVoiceActivity?: (isActive: boolean) => void;
+  onSilence?: () => void;
   vadThreshold?: number;
   silenceDurationMs?: number;
 }
@@ -14,9 +15,32 @@ export function useAudioRecorder({
   onStop,
   onError,
   onVoiceActivity,
+  onSilence,
   vadThreshold = 0.02,
   silenceDurationMs = 1500,
 }: UseAudioRecorderOptions = {}) {
+  const optionsRef = useRef({
+    onDataAvailable,
+    onStop,
+    onError,
+    onVoiceActivity,
+    onSilence,
+    vadThreshold,
+    silenceDurationMs,
+  });
+
+  useEffect(() => {
+    optionsRef.current = {
+      onDataAvailable,
+      onStop,
+      onError,
+      onVoiceActivity,
+      onSilence,
+      vadThreshold,
+      silenceDurationMs,
+    };
+  }, [onDataAvailable, onStop, onError, onVoiceActivity, onSilence, vadThreshold, silenceDurationMs]);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
@@ -25,7 +49,7 @@ export function useAudioRecorder({
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number>();
-  
+
   // VAD state
   const vadStateRef = useRef<{
     isVoiceActive: boolean;
@@ -42,31 +66,31 @@ export function useAudioRecorder({
   const checkVoiceActivity = useCallback((level: number) => {
     const now = Date.now();
     const state = vadStateRef.current;
-    
-    if (level > vadThreshold) {
-      // Voice detected
+    const threshold = optionsRef.current.vadThreshold ?? 0.02;
+    const silenceDuration = optionsRef.current.silenceDurationMs ?? 1500;
+
+    if (level > threshold) {
       if (!state.isVoiceActive) {
         state.isVoiceActive = true;
         state.voiceActiveCount = 0;
         state.consecutiveSilence = 0;
-        onVoiceActivity?.(true);
+        optionsRef.current.onVoiceActivity?.(true);
       }
       state.silenceStartTime = null;
       state.voiceActiveCount++;
     } else {
-      // Silence
       if (state.isVoiceActive) {
         state.consecutiveSilence++;
         if (state.silenceStartTime === null) {
           state.silenceStartTime = now;
-        } else if (now - state.silenceStartTime > silenceDurationMs) {
-          // End of speech detected
+        } else if (now - state.silenceStartTime > silenceDuration) {
           state.isVoiceActive = false;
-          onVoiceActivity?.(false);
+          optionsRef.current.onVoiceActivity?.(false);
+          optionsRef.current.onSilence?.();
         }
       }
     }
-  }, [vadThreshold, silenceDurationMs, onVoiceActivity]);
+  }, []);
 
   const startRecording = useCallback(async () => {
     try {
@@ -80,10 +104,18 @@ export function useAudioRecorder({
 
       streamRef.current = stream;
 
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus',
-      });
+      let mimeType = 'audio/webm';
+      if (typeof MediaRecorder !== 'undefined') {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          mimeType = 'audio/webm;codecs=opus';
+        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+          mimeType = 'audio/webm';
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          mimeType = 'audio/mp4';
+        }
+      }
 
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
 
@@ -98,21 +130,24 @@ export function useAudioRecorder({
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           chunksRef.current.push(event.data);
-          onDataAvailable?.(event.data);
+          optionsRef.current.onDataAvailable?.(event.data);
         }
       };
 
       mediaRecorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        onStop?.(blob);
-        stream.getTracks().forEach((track) => track.stop());
+        const blob = new Blob(chunksRef.current, { type: mimeType });
+        optionsRef.current.onStop?.(blob);
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => track.stop());
+        }
       };
 
       mediaRecorder.onerror = (event) => {
-        onError?.(new Error(`Recording error: ${event.error}`));
+        optionsRef.current.onError?.(new Error(`Recording error: ${event.error}`));
       };
 
-      audioContextRef.current = new AudioContext();
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      audioContextRef.current = new AudioCtx();
       analyserRef.current = audioContextRef.current.createAnalyser();
       analyserRef.current.fftSize = 256;
       analyserRef.current.smoothingTimeConstant = 0.8;
@@ -133,44 +168,58 @@ export function useAudioRecorder({
       };
       updateAudioLevel();
 
-      // Start with small chunks for real-time streaming
       mediaRecorder.start(100);
       setIsRecording(true);
     } catch (err) {
-      onError?.(err instanceof Error ? err : new Error('Failed to start recording'));
+      optionsRef.current.onError?.(err instanceof Error ? err : new Error('Failed to start recording'));
     }
-  }, [onDataAvailable, onStop, onError, checkVoiceActivity]);
+  }, [checkVoiceActivity]);
 
   const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-        audioContextRef.current = null;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (err) {
+        console.warn('Error stopping mediaRecorder:', err);
       }
     }
-  }, [isRecording]);
+    setIsRecording(false);
+
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+  }, []);
 
   const cancelRecording = useCallback(() => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+    if (mediaRecorderRef.current) {
+      try {
+        if (mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.onstop = null;
+          mediaRecorderRef.current.stop();
+        }
+      } catch (err) {
+        console.warn('Error cancelling mediaRecorder:', err);
+      }
       mediaRecorderRef.current = null;
-      setIsRecording(false);
-
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-        audioContextRef.current = null;
-      }
     }
-  }, [isRecording]);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    setIsRecording(false);
+
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -178,14 +227,22 @@ export function useAudioRecorder({
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close().catch(() => {});
       }
-      if (mediaRecorderRef.current && isRecording) {
-        mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try {
+          mediaRecorderRef.current.onstop = null;
+          mediaRecorderRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
       }
     };
-  }, [isRecording]);
+  }, []);
 
   return {
     isRecording,
