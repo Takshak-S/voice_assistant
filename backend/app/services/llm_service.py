@@ -37,6 +37,7 @@ class LLMService:
         self._system_prompt = (
             "You are a helpful, friendly voice assistant. "
             "Keep responses concise and conversational since they will be spoken aloud. "
+            "Do NOT use markdown formatting (such as asterisks for bold or italics, hashes for headers, or bullet points) in your responses because they will be read aloud by text-to-speech. "
             "Use tools when appropriate to answer questions. "
             "If you don't know something, say so honestly."
         )

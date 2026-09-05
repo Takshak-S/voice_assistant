@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
+import { stripMarkdownForSpeech } from '@/lib/utils';
 
 interface UseSpeechSynthesisOptions {
   lang?: string;
@@ -39,7 +40,8 @@ export function useSpeechSynthesis({ lang = 'en-US' }: UseSpeechSynthesisOptions
       return;
     }
 
-    if (!text || !text.trim()) {
+    const cleanedText = stripMarkdownForSpeech(text);
+    if (!cleanedText) {
       onEnd?.();
       return;
     }
@@ -47,7 +49,7 @@ export function useSpeechSynthesis({ lang = 'en-US' }: UseSpeechSynthesisOptions
     // Cancel any previous speech
     window.speechSynthesis.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(text.trim());
+    const utterance = new SpeechSynthesisUtterance(cleanedText);
     currentUtteranceRef.current = utterance;
 
     const targetLang = customLang || langRef.current || 'en-US';
